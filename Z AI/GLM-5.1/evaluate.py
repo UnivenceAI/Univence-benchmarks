@@ -3,6 +3,10 @@ LiveCodeBench Evaluator - Windows-compatible.
 Evaluates solution files against the LiveCodeBench dataset by running
 each solution in a subprocess against hidden test cases.
 Uses temp files to avoid Windows command-line length limits.
+
+Sources solutions in priority order:
+  1. my_agent_lcb_submission.jsonl (if it exists)
+  2. answers/ folder (*.py files named by question_id)
 """
 
 import sys
@@ -17,15 +21,54 @@ import tempfile
 from datasets import load_dataset
 
 
-def load_solutions(answers_dir):
+def load_solutions_from_jsonl(jsonl_path):
+    """Load all solutions from a JSONL submission file (question_id -> code)."""
+    solutions = {}
+    if not os.path.isfile(jsonl_path):
+        return solutions
+    with open(jsonl_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            entry = json.loads(line)
+            qid = entry.get("question_id")
+            code = entry.get("model_generation")
+            if qid and code:
+                solutions[qid] = code
+    return solutions
+
+
+def load_solutions_from_folder(answers_dir):
     """Load all solution files from the answers directory."""
     solutions = {}
+    if not os.path.isdir(answers_dir):
+        return solutions
     for filename in os.listdir(answers_dir):
         if filename.endswith(".py"):
             question_id = filename[:-3]
             with open(os.path.join(answers_dir, filename), "r", encoding="utf-8") as f:
                 solutions[question_id] = f.read()
     return solutions
+
+
+def load_solutions(script_dir):
+    """Load solutions from JSONL first, fall back to answers/ folder."""
+    jsonl_path = os.path.join(script_dir, "my_agent_lcb_submission.jsonl")
+    answers_dir = os.path.join(script_dir, "answers")
+
+    solutions = load_solutions_from_jsonl(jsonl_path)
+    if solutions:
+        print(f"Loaded {len(solutions)} solutions from {jsonl_path}")
+        return solutions
+
+    solutions = load_solutions_from_folder(answers_dir)
+    if solutions:
+        print(f"Loaded {len(solutions)} solutions from {answers_dir}\\")
+        return solutions
+
+    print("WARNING: No solutions found in my_agent_lcb_submission.jsonl or answers/ folder.")
+    return {}
 
 
 def decode_private_test_cases(raw):
@@ -240,8 +283,8 @@ def run_solution_in_subprocess(solution_code, test_data, timeout=30):
 
 
 def main():
-    answers_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "answers")
-    solutions = load_solutions(answers_dir)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    solutions = load_solutions(script_dir)
     print(f"Loaded {len(solutions)} solutions")
     print(f"Question IDs: {sorted(solutions.keys())}")
     print()
